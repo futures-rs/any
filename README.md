@@ -1,2 +1,3 @@
-# channel
-futures type erase support
+# Erasure
+
+futures Stream/Sink type erase support
