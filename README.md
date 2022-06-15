@@ -1,3 +1,4 @@
 # Erasure
 
-futures Stream/Sink type erase support
+futures Stream/Sink runtime type erasure support library
+
