@@ -1,4 +1,4 @@
-# Erasure
+# Any
 
-futures Stream/Sink runtime type erasure support library
+futures runtime type erasure support library
 
