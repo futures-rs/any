@@ -11,5 +11,7 @@ log = "0.4.16"
 vtable = "0.1.7"
 
 [dev-dependencies]
+anyhow = "1.0.57"
+async-std = {version = "1.11.0", features = ["attributes", "default"]}
 dotenv = "0.15.0"
 pretty_env_logger = "0.4.0"

@@ -1,4 +1,4 @@
-use futures::{Sink, Stream, StreamExt};
+use futures::{stream::PollFn, Sink, Stream, StreamExt};
 
 use std::{
     marker::PhantomData,
@@ -214,13 +214,15 @@ impl<Item> Stream for AnyStream<Item> {
 
 /// Cast any type stream to AnyStream
 pub trait AnyStreamEx: Stream {
-    fn to_any(&mut self) -> AnyStream<Self::Item>
+    fn to_any(self) -> AnyStream<Self::Item>
     where
-        Self: Unpin,
+        Self: Unpin + Sized,
     {
         AnyStream::new(self)
     }
 }
+
+impl<T: ?Sized> AnyStreamEx for T where T: Stream {}
 
 pub struct AnySink<Item, Error> {
     vtable: NonNull<StreamSinkVTable<Item, (), Error>>,
@@ -280,5 +282,24 @@ pub trait AnySinkEx<Item>: Sink<Item> {
         Self: Unpin,
     {
         AnySink::new(self)
+    }
+}
+
+impl<T: ?Sized, Item> AnySinkEx<Item> for T where T: Sink<Item> {}
+
+#[cfg(test)]
+mod tests {
+
+    use std::task::Poll;
+
+    use super::*;
+
+    #[async_std::test]
+    async fn test_anystream() -> Result<(), anyhow::Error> {
+        let stream = futures::stream::poll_fn(|_| Poll::Ready(Some("Hello".to_owned())));
+
+        stream.to_any();
+
+        Ok(())
     }
 }
