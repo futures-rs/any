@@ -214,7 +214,7 @@ impl<Item> Stream for AnyStream<Item> {
 
 /// Cast any type stream to AnyStream
 pub trait AnyStreamEx: Stream {
-    fn to_any(self) -> AnyStream<Self::Item>
+    fn to_any_stream(self) -> AnyStream<Self::Item>
     where
         Self: Unpin + Sized,
     {
@@ -277,7 +277,7 @@ impl<Item, Error> Sink<Item> for AnySink<Item, Error> {
 
 /// Cast any type stream to AnyStream
 pub trait AnySinkEx<Item>: Sink<Item> {
-    fn to_any(&mut self) -> AnySink<Item, Self::Error>
+    fn to_any_sink(&mut self) -> AnySink<Item, Self::Error>
     where
         Self: Unpin,
     {
@@ -298,7 +298,7 @@ mod tests {
     async fn test_anystream() -> Result<(), anyhow::Error> {
         let stream = futures::stream::poll_fn(|_| Poll::Ready(Some("Hello".to_owned())));
 
-        stream.to_any();
+        stream.to_any_stream();
 
         Ok(())
     }
