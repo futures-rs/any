@@ -91,6 +91,8 @@ where
 
     let channel = channel.as_mut();
 
+    log::debug!("poll_ready -- call");
+
     channel.inner.as_mut().poll_ready(cx)
 }
 
@@ -257,6 +259,7 @@ impl<Item, Error> Sink<Item> for AnySink<Item, Error> {
     type Error = Error;
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        log::debug!("poll_close");
         let vtable = self.vtable.lock().unwrap();
 
         unsafe {
@@ -267,6 +270,7 @@ impl<Item, Error> Sink<Item> for AnySink<Item, Error> {
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        log::debug!("poll_flush");
         let vtable = self.vtable.lock().unwrap();
         unsafe {
             let poll_flush = vtable.0.as_ref().sink.as_ref().unwrap().poll_flush;
@@ -276,15 +280,19 @@ impl<Item, Error> Sink<Item> for AnySink<Item, Error> {
     }
 
     fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        log::debug!("poll_ready");
         let vtable = self.vtable.lock().unwrap();
         unsafe {
-            let poll_ready = vtable.0.as_ref().sink.as_ref().unwrap().poll_ready;
+            let vtable = vtable.0;
 
-            poll_ready(vtable.0, cx)
+            let poll_ready = vtable.as_ref().sink.as_ref().unwrap().poll_ready;
+
+            poll_ready(vtable, cx)
         }
     }
 
     fn start_send(self: Pin<&mut Self>, item: Item) -> Result<(), Self::Error> {
+        log::debug!("start_send");
         let vtable = self.vtable.lock().unwrap();
         unsafe {
             let start_send = vtable.0.as_ref().sink.as_ref().unwrap().start_send;
@@ -296,9 +304,9 @@ impl<Item, Error> Sink<Item> for AnySink<Item, Error> {
 
 /// Cast any type stream to AnyStream
 pub trait AnySinkEx<Item>: Sink<Item> {
-    fn to_any_sink(&mut self) -> AnySink<Item, Self::Error>
+    fn to_any_sink(self) -> AnySink<Item, Self::Error>
     where
-        Self: Unpin,
+        Self: Unpin + Sized,
     {
         AnySink::new(self)
     }
