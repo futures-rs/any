@@ -1,4 +1,4 @@
-use futures::{stream::PollFn, Sink, Stream, StreamExt};
+use futures::{Sink, Stream, StreamExt};
 
 use std::{
     marker::PhantomData,
