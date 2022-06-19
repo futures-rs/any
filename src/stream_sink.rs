@@ -3,6 +3,7 @@ use futures::{stream::PollFn, Sink, Stream, StreamExt};
 use std::{
     marker::PhantomData,
     ptr::NonNull,
+    sync::Mutex,
     task::{Context, Poll},
 };
 
@@ -185,8 +186,20 @@ impl<S, Output, Error> RawStreamSink<S, Output, (), Error> {
     }
 }
 
+struct StreamSink<Output, Input, Error>(NonNull<StreamSinkVTable<Output, Input, Error>>);
+
+impl<Output, Input, Error> From<NonNull<StreamSinkVTable<Output, Input, Error>>>
+    for StreamSink<Output, Input, Error>
+{
+    fn from(ptr: NonNull<StreamSinkVTable<Output, Input, Error>>) -> Self {
+        StreamSink(ptr)
+    }
+}
+
+unsafe impl<Output, Input, Error> Send for StreamSink<Output, Input, Error> {}
+
 pub struct AnyStream<Item> {
-    vtable: NonNull<StreamSinkVTable<(), Item, ()>>,
+    vtable: Mutex<StreamSink<(), Item, ()>>,
 }
 
 impl<Item> AnyStream<Item> {
@@ -195,7 +208,7 @@ impl<Item> AnyStream<Item> {
         S: Stream<Item = Item> + Unpin,
     {
         AnyStream {
-            vtable: RawStreamSink::new_stream(inner),
+            vtable: Mutex::new(RawStreamSink::new_stream(inner).into()),
         }
     }
 }
@@ -204,10 +217,11 @@ impl<Item> Stream for AnyStream<Item> {
     type Item = Item;
 
     fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let vtable = self.vtable.lock().unwrap();
         unsafe {
-            let poll_next = self.vtable.as_ref().stream.as_ref().unwrap().poll_next;
+            let poll_next = vtable.0.as_ref().stream.as_ref().unwrap().poll_next;
 
-            poll_next(self.vtable, cx)
+            poll_next(vtable.0, cx)
         }
     }
 }
@@ -225,7 +239,7 @@ pub trait AnyStreamEx: Stream {
 impl<T: ?Sized> AnyStreamEx for T where T: Stream {}
 
 pub struct AnySink<Item, Error> {
-    vtable: NonNull<StreamSinkVTable<Item, (), Error>>,
+    vtable: Mutex<StreamSink<Item, (), Error>>,
 }
 
 impl<Item, Error> AnySink<Item, Error> {
@@ -234,7 +248,7 @@ impl<Item, Error> AnySink<Item, Error> {
         S: Sink<Item, Error = Error> + Unpin,
     {
         AnySink {
-            vtable: RawStreamSink::new_sink(inner),
+            vtable: Mutex::new(RawStreamSink::new_sink(inner).into()),
         }
     }
 }
@@ -243,34 +257,39 @@ impl<Item, Error> Sink<Item> for AnySink<Item, Error> {
     type Error = Error;
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        unsafe {
-            let poll_close = self.vtable.as_ref().sink.as_ref().unwrap().poll_close;
+        let vtable = self.vtable.lock().unwrap();
 
-            poll_close(self.vtable, cx)
+        unsafe {
+            let poll_close = vtable.0.as_ref().sink.as_ref().unwrap().poll_close;
+
+            poll_close(vtable.0, cx)
         }
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        let vtable = self.vtable.lock().unwrap();
         unsafe {
-            let poll_flush = self.vtable.as_ref().sink.as_ref().unwrap().poll_flush;
+            let poll_flush = vtable.0.as_ref().sink.as_ref().unwrap().poll_flush;
 
-            poll_flush(self.vtable, cx)
+            poll_flush(vtable.0, cx)
         }
     }
 
     fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        let vtable = self.vtable.lock().unwrap();
         unsafe {
-            let poll_ready = self.vtable.as_ref().sink.as_ref().unwrap().poll_ready;
+            let poll_ready = vtable.0.as_ref().sink.as_ref().unwrap().poll_ready;
 
-            poll_ready(self.vtable, cx)
+            poll_ready(vtable.0, cx)
         }
     }
 
     fn start_send(self: Pin<&mut Self>, item: Item) -> Result<(), Self::Error> {
+        let vtable = self.vtable.lock().unwrap();
         unsafe {
-            let start_send = self.vtable.as_ref().sink.as_ref().unwrap().start_send;
+            let start_send = vtable.0.as_ref().sink.as_ref().unwrap().start_send;
 
-            start_send(self.vtable, item)
+            start_send(vtable.0, item)
         }
     }
 }
@@ -292,13 +311,25 @@ mod tests {
 
     use std::task::Poll;
 
+    use futures::SinkExt;
+
     use super::*;
 
     #[async_std::test]
     async fn test_anystream() -> Result<(), anyhow::Error> {
         let stream = futures::stream::poll_fn(|_| Poll::Ready(Some("Hello".to_owned())));
 
-        stream.to_any_stream();
+        async_std::task::spawn(async move {
+            stream.to_any_stream().next().await;
+        });
+
+        let mut sink = futures::sink::drain::<String>().to_any_sink();
+
+        async_std::task::spawn(async move {
+            sink.send("hello".to_owned()).await?;
+
+            Ok::<(), anyhow::Error>(())
+        });
 
         Ok(())
     }
