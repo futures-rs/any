@@ -91,8 +91,6 @@ where
 
     let channel = channel.as_mut();
 
-    log::debug!("poll_ready -- call");
-
     channel.inner.as_mut().poll_ready(cx)
 }
 
@@ -259,7 +257,7 @@ impl<Item, Error> Sink<Item> for AnySink<Item, Error> {
     type Error = Error;
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        log::debug!("poll_close");
+        log::trace!("poll_close");
         let vtable = self.vtable.lock().unwrap();
 
         unsafe {
@@ -270,7 +268,7 @@ impl<Item, Error> Sink<Item> for AnySink<Item, Error> {
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        log::debug!("poll_flush");
+        log::trace!("poll_flush");
         let vtable = self.vtable.lock().unwrap();
         unsafe {
             let poll_flush = vtable.0.as_ref().sink.as_ref().unwrap().poll_flush;
@@ -280,7 +278,7 @@ impl<Item, Error> Sink<Item> for AnySink<Item, Error> {
     }
 
     fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        log::debug!("poll_ready");
+        log::trace!("poll_ready");
         let vtable = self.vtable.lock().unwrap();
         unsafe {
             let vtable = vtable.0;
@@ -292,7 +290,7 @@ impl<Item, Error> Sink<Item> for AnySink<Item, Error> {
     }
 
     fn start_send(self: Pin<&mut Self>, item: Item) -> Result<(), Self::Error> {
-        log::debug!("start_send");
+        log::trace!("start_send");
         let vtable = self.vtable.lock().unwrap();
         unsafe {
             let start_send = vtable.0.as_ref().sink.as_ref().unwrap().start_send;
