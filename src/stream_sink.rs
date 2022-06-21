@@ -159,6 +159,27 @@ pub struct RawStreamSink<S, Output, Input, Error> {
     inner: Pin<Box<S>>,
 }
 
+impl<S, Output, Input, Error> RawStreamSink<S, Output, Input, Error> {
+    pub fn new(inner: S) -> NonNull<StreamSinkVTable<Output, Input, Error>>
+    where
+        S: Sink<Output> + Stream<Item = Input> + Unpin,
+    {
+        let boxed = Box::new(RawStreamSink {
+            vtable: StreamSinkVTable::<(), Input, ()> {
+                stream: Some(StreamVTable::new::<S>()),
+                sink: None,
+            },
+            inner: Box::pin(inner),
+        });
+
+        unsafe {
+            NonNull::new_unchecked(
+                Box::into_raw(boxed) as *mut StreamSinkVTable<Output, Input, Error>
+            )
+        }
+    }
+}
+
 impl<S, Input> RawStreamSink<S, (), Input, ()> {
     pub fn new_stream(inner: S) -> NonNull<StreamSinkVTable<(), Input, ()>>
     where
@@ -344,6 +365,92 @@ pub trait AnySinkEx<Item>: Sink<Item> {
 }
 
 impl<T: ?Sized, Item> AnySinkEx<Item> for T where T: Sink<Item> {}
+
+pub struct AnyStreamSink<Output, Input, Error> {
+    vtable: Mutex<StreamSink<Output, Input, Error>>,
+}
+
+impl<Output, Input, Error> AnyStreamSink<Output, Input, Error> {
+    pub fn new<S>(inner: S) -> Self
+    where
+        S: Stream<Item = Input> + Sink<Output, Error = Error> + Unpin,
+    {
+        AnyStreamSink {
+            vtable: Mutex::new(RawStreamSink::new(inner).into()),
+        }
+    }
+}
+
+impl<Output, Input, Error> Drop for AnyStreamSink<Output, Input, Error> {
+    fn drop(&mut self) {
+        let vtable = self.vtable.lock().unwrap();
+        unsafe {
+            let drop = vtable.0.as_ref().sink.as_ref().unwrap().drop;
+
+            drop(vtable.0);
+        }
+    }
+}
+
+impl<Output, Input, Error> Sink<Output> for AnyStreamSink<Output, Input, Error> {
+    type Error = Error;
+
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        log::trace!("poll_close");
+        let vtable = self.vtable.lock().unwrap();
+
+        unsafe {
+            let poll_close = vtable.0.as_ref().sink.as_ref().unwrap().poll_close;
+
+            poll_close(vtable.0, cx)
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        log::trace!("poll_flush");
+        let vtable = self.vtable.lock().unwrap();
+        unsafe {
+            let poll_flush = vtable.0.as_ref().sink.as_ref().unwrap().poll_flush;
+
+            poll_flush(vtable.0, cx)
+        }
+    }
+
+    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        log::trace!("poll_ready");
+        let vtable = self.vtable.lock().unwrap();
+        unsafe {
+            let vtable = vtable.0;
+
+            let poll_ready = vtable.as_ref().sink.as_ref().unwrap().poll_ready;
+
+            poll_ready(vtable, cx)
+        }
+    }
+
+    fn start_send(self: Pin<&mut Self>, item: Output) -> Result<(), Self::Error> {
+        log::trace!("start_send");
+        let vtable = self.vtable.lock().unwrap();
+        unsafe {
+            let start_send = vtable.0.as_ref().sink.as_ref().unwrap().start_send;
+
+            start_send(vtable.0, item)
+        }
+    }
+}
+
+impl<Output, Input, Error> Stream for AnyStreamSink<Output, Input, Error> {
+    type Item = Input;
+
+    fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let vtable = self.vtable.lock().unwrap();
+        unsafe {
+            let poll_next = vtable.0.as_ref().stream.as_ref().unwrap().poll_next;
+
+            poll_next(vtable.0, cx)
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
