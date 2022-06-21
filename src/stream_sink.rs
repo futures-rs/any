@@ -15,6 +15,8 @@ pub struct StreamVTable<Output, Input, Error> {
         NonNull<StreamSinkVTable<Output, Input, Error>>,
         &mut Context<'_>,
     ) -> Poll<Option<Input>>,
+
+    drop: unsafe fn(NonNull<StreamSinkVTable<Output, Input, Error>>),
 }
 
 impl<Output, Input, Error> StreamVTable<Output, Input, Error> {
@@ -23,6 +25,7 @@ impl<Output, Input, Error> StreamVTable<Output, Input, Error> {
         S: Stream<Item = Input> + Unpin,
     {
         StreamVTable {
+            drop: drop::<S, Output, Input, Error>,
             poll_next: poll_next::<S, Output, Input, Error>,
         }
     }
@@ -30,6 +33,7 @@ impl<Output, Input, Error> StreamVTable<Output, Input, Error> {
 
 #[repr(C)]
 pub struct SinkVTable<Output, Input, Error> {
+    drop: unsafe fn(NonNull<StreamSinkVTable<Output, Input, Error>>),
     pub poll_ready: unsafe fn(
         NonNull<StreamSinkVTable<Output, Input, Error>>,
         &mut Context<'_>,
@@ -59,6 +63,7 @@ impl<Output, Input, Error> SinkVTable<Output, Input, Error> {
         T: Sink<Output, Error = Error> + Unpin,
     {
         SinkVTable {
+            drop: drop::<T, Output, Input, Error>,
             poll_ready: poll_ready::<T, Output, Input, Error>,
             start_send: start_send::<T, Output, Input, Error>,
             poll_flush: poll_flush::<T, Output, Input, Error>,
@@ -66,6 +71,12 @@ impl<Output, Input, Error> SinkVTable<Output, Input, Error> {
             _maker: PhantomData,
         }
     }
+}
+
+unsafe fn drop<S, Output, Input, Error>(vtable: NonNull<StreamSinkVTable<Output, Input, Error>>) {
+    let raw = vtable.cast::<RawStreamSink<S, Output, Input, Error>>();
+
+    Box::from_raw(raw.as_ptr());
 }
 
 unsafe fn poll_next<S, Output, Input, Error>(
@@ -213,6 +224,17 @@ impl<Item> AnyStream<Item> {
     }
 }
 
+impl<Item> Drop for AnyStream<Item> {
+    fn drop(&mut self) {
+        let vtable = self.vtable.lock().unwrap();
+        unsafe {
+            let drop = vtable.0.as_ref().stream.as_ref().unwrap().drop;
+
+            drop(vtable.0);
+        }
+    }
+}
+
 impl<Item> Stream for AnyStream<Item> {
     type Item = Item;
 
@@ -249,6 +271,17 @@ impl<Item, Error> AnySink<Item, Error> {
     {
         AnySink {
             vtable: Mutex::new(RawStreamSink::new_sink(inner).into()),
+        }
+    }
+}
+
+impl<Item, Error> Drop for AnySink<Item, Error> {
+    fn drop(&mut self) {
+        let vtable = self.vtable.lock().unwrap();
+        unsafe {
+            let drop = vtable.0.as_ref().sink.as_ref().unwrap().drop;
+
+            drop(vtable.0);
         }
     }
 }
