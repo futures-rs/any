@@ -76,6 +76,8 @@ impl<Output, Input, Error> SinkVTable<Output, Input, Error> {
 unsafe fn drop<S, Output, Input, Error>(vtable: NonNull<StreamSinkVTable<Output, Input, Error>>) {
     let raw = vtable.cast::<RawStreamSink<S, Output, Input, Error>>();
 
+    log::trace!("drop {:?}", raw);
+
     Box::from_raw(raw.as_ptr());
 }
 
@@ -86,6 +88,8 @@ unsafe fn poll_next<S, Output, Input, Error>(
 where
     S: Stream<Item = Input> + Unpin,
 {
+    log::trace!("poll_next ....");
+
     let mut stream = vtable.cast::<RawStreamSink<S, Output, Input, Error>>();
 
     stream.as_mut().inner.poll_next_unpin(cx)
@@ -98,6 +102,8 @@ unsafe fn poll_ready<T, Output, Input, Error>(
 where
     T: Sink<Output, Error = Error>,
 {
+    log::trace!("poll_ready ....");
+
     let mut channel = ptr.cast::<RawStreamSink<T, Output, Input, Error>>();
 
     let channel = channel.as_mut();
@@ -112,6 +118,8 @@ unsafe fn start_send<T, Output, Input, Error>(
 where
     T: Sink<Output, Error = Error>,
 {
+    log::trace!("start_send ....");
+
     let mut channel = ptr.cast::<RawStreamSink<T, Output, Input, Error>>();
 
     let channel = channel.as_mut();
@@ -126,6 +134,8 @@ unsafe fn poll_flush<T, Output, Input, Error>(
 where
     T: Sink<Output, Error = Error>,
 {
+    log::trace!("poll_flush ....");
+
     let mut channel = ptr.cast::<RawStreamSink<T, Output, Input, Error>>();
 
     let channel = channel.as_mut();
@@ -140,6 +150,8 @@ unsafe fn poll_close<T, Output, Input, Error>(
 where
     T: Sink<Output, Error = Error>,
 {
+    log::trace!("poll_close ....");
+
     let mut channel = ptr.cast::<RawStreamSink<T, Output, Input, Error>>();
 
     let channel = channel.as_mut();
@@ -162,21 +174,25 @@ pub struct RawStreamSink<S, Output, Input, Error> {
 impl<S, Output, Input, Error> RawStreamSink<S, Output, Input, Error> {
     pub fn new(inner: S) -> NonNull<StreamSinkVTable<Output, Input, Error>>
     where
-        S: Sink<Output> + Stream<Item = Input> + Unpin,
+        S: Sink<Output, Error = Error> + Stream<Item = Input> + Unpin,
     {
         let boxed = Box::new(RawStreamSink {
-            vtable: StreamSinkVTable::<(), Input, ()> {
+            vtable: StreamSinkVTable::<Output, Input, Error> {
                 stream: Some(StreamVTable::new::<S>()),
-                sink: None,
+                sink: Some(SinkVTable::new::<S>()),
             },
             inner: Box::pin(inner),
         });
 
-        unsafe {
+        let ptr = unsafe {
             NonNull::new_unchecked(
                 Box::into_raw(boxed) as *mut StreamSinkVTable<Output, Input, Error>
             )
-        }
+        };
+
+        log::trace!("create stream+sink {:?}", ptr);
+
+        ptr
     }
 }
 
@@ -193,9 +209,13 @@ impl<S, Input> RawStreamSink<S, (), Input, ()> {
             inner: Box::pin(inner),
         });
 
-        unsafe {
+        let ptr = unsafe {
             NonNull::new_unchecked(Box::into_raw(boxed) as *mut StreamSinkVTable<(), Input, ()>)
-        }
+        };
+
+        log::trace!("create stream {:?}", ptr);
+
+        ptr
     }
 }
 
@@ -212,9 +232,13 @@ impl<S, Output, Error> RawStreamSink<S, Output, (), Error> {
             inner: Box::pin(inner),
         });
 
-        unsafe {
+        let ptr = unsafe {
             NonNull::new_unchecked(Box::into_raw(boxed) as *mut StreamSinkVTable<Output, (), Error>)
-        }
+        };
+
+        log::trace!("create sink {:?}", ptr);
+
+        ptr
     }
 }
 
@@ -421,6 +445,8 @@ impl<Output, Input, Error> Sink<Output> for AnyStreamSink<Output, Input, Error> 
         let vtable = self.vtable.lock().unwrap();
         unsafe {
             let vtable = vtable.0;
+
+            log::trace!("poll_ready ... {:?}", vtable.as_ref().sink.is_some());
 
             let poll_ready = vtable.as_ref().sink.as_ref().unwrap().poll_ready;
 
